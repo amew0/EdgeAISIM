@@ -68,6 +68,8 @@ class Replay_buffer():
 
         return np.array(state), np.array(next_state), np.array(probs), np.array(action), np.array(reward).reshape(-1, 1), np.array(done).reshape(-1, 1)
 
+    def ready(self, batch_size: int):
+        return len(self.storage) >= batch_size
 
 class Actor(nn.Module):
 
@@ -134,6 +136,8 @@ class DDPG(object):
         self.num_critic_update_iteration = 0          
         self.num_actor_update_iteration = 0
         self.num_training = 0
+        
+        self.batch_size = batch_size
 
     def select_action(self, state):
   
@@ -147,7 +151,7 @@ class DDPG(object):
 
         for it in range(update_iteration):
             # For each Sample in replay buffer batch
-            state, next_state, probs, action, reward, done = self.replay_buffer.sample(batch_size)
+            state, next_state, probs, action, reward, done = self.replay_buffer.sample(self.batch_size)
             state = torch.FloatTensor(state).to(device) #convert numpy array in replay buffer to tensor
             probs = torch.FloatTensor(probs).to(device)
             action = torch.FloatTensor(action).to(device)
@@ -158,7 +162,8 @@ class DDPG(object):
             # Compute the target Q value
             
 
-            target_Q = self.critic_target(next_state, np.reshape(self.actor_target(next_state)[1],(-1,1)))
+            actor_target_action = self.actor_target(next_state)[1].unsqueeze(1).float()
+            target_Q = self.critic_target(next_state, actor_target_action)
             target_Q = reward + (done * gamma * target_Q).detach()
 
             # Get current Q estimate
@@ -179,7 +184,8 @@ class DDPG(object):
             
 
             # Compute actor loss as the negative mean Q value using the critic network and the actor network
-            actor_loss = -dist.log_prob(action).mean()*self.critic(state, np.reshape(self.actor_target(next_state)[1],(-1,1))).mean()
+            actor_target_action = self.actor_target(next_state)[1].unsqueeze(1).float()
+            actor_loss = -dist.log_prob(action).mean() * self.critic(state, actor_target_action).mean()
             
 
             # Optimize the actor
@@ -202,3 +208,25 @@ class DDPG(object):
            
             self.num_actor_update_iteration += 1
             self.num_critic_update_iteration += 1
+
+    def save_model(self, model_path):
+        """Save the model to a file."""
+        torch.save(
+            {
+                "actor": self.actor.state_dict(),
+                "actor_target": self.actor_target.state_dict(),
+                "critic": self.critic.state_dict(),
+                "critic_target": self.critic_target.state_dict(),
+            },
+            model_path,
+        )
+        print(f"Model saved as {model_path}")
+
+    def load_model(self, model_path):
+        """Load the model from a file."""
+        checkpoint = torch.load(model_path)
+        self.actor.load_state_dict(checkpoint["actor"])
+        self.actor_target.load_state_dict(checkpoint["actor_target"])
+        self.critic.load_state_dict(checkpoint["critic"])
+        self.critic_target.load_state_dict(checkpoint["critic_target"])
+        print(f"Model loaded from {model_path}")
